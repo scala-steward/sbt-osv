@@ -61,7 +61,11 @@ object ScanSettings {
         name.value,
         osvScopes.value,
         osvFailBuildOnCVSS.value,
-        osvEngineSettings.value,
+        osvEngineSettings.value.withTimeouts(
+          osvAnalysisTimeout.value,
+          osvConnectionTimeout.value,
+          osvConnectionReadTimeout.value
+        ),
         AllProjectsScan.dependencies().value,
         AllProjectsScan.suppressions().value,
         osvOutputDirectory.value,
@@ -84,7 +88,11 @@ object ScanSettings {
               name.value,
               osvScopes.value,
               osvFailBuildOnCVSS.value,
-              osvEngineSettings.value,
+              osvEngineSettings.value.withTimeouts(
+                osvAnalysisTimeout.value,
+                osvConnectionTimeout.value,
+                osvConnectionReadTimeout.value
+              ),
               Dependencies.projectDependencies.value,
               GenerateSuppressions.forProject.value,
               osvOutputDirectory.value,

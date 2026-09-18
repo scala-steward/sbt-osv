@@ -7,6 +7,7 @@
 package net.nmoncho.sbt.osv
 package api
 
+import java.time.Duration
 import java.time.Instant
 
 import requests.Response
@@ -19,7 +20,16 @@ package object v1 {
   implicit val instantReadWriter: ReadWriter[Instant] =
     readwriter[String].bimap(_.toString, Instant.parse)
 
-  class Client private (baseUrl: String) {
+  class Client private (
+      baseUrl: String,
+      connectTimeout: Option[Duration],
+      readTimeout: Option[Duration]
+  ) {
+
+    // requests-scala expects timeouts in milliseconds; when unset we keep its own
+    // 10s default so behaviour is unchanged unless the user configures a timeout.
+    private val connectTimeoutMs: Int = connectTimeout.map(_.toMillis.toInt).getOrElse(10000)
+    private val readTimeoutMs: Int    = readTimeout.map(_.toMillis.toInt).getOrElse(10000)
 
     /** Queries the vulnerabilities for a given package
       *
@@ -37,9 +47,11 @@ package object v1 {
       ): Either[RpcStatus, Vector[OsvVulnerability]] =
         handleResponse[V1VulnerabilityList](
           requests.post(
-            url   = s"${baseUrl}/v1/query",
-            data  = write(q),
-            check = false
+            url            = s"${baseUrl}/v1/query",
+            data           = write(q),
+            check          = false,
+            connectTimeout = connectTimeoutMs,
+            readTimeout    = readTimeoutMs
           )
         ) match {
           // No more vulnerabilities, this case shouldn't happen though
@@ -75,9 +87,11 @@ package object v1 {
     )(implicit log: Logger): Either[RpcStatus, V1BatchVulnerabilityList] =
       handleResponse[V1BatchVulnerabilityList](
         requests.post(
-          url   = s"${baseUrl}/v1/querybatch",
-          data  = write(q),
-          check = false
+          url            = s"${baseUrl}/v1/querybatch",
+          data           = write(q),
+          check          = false,
+          connectTimeout = connectTimeoutMs,
+          readTimeout    = readTimeoutMs
         )
       )
 
@@ -91,8 +105,10 @@ package object v1 {
     def vulnerability(id: String)(implicit log: Logger): Either[RpcStatus, OsvVulnerability] =
       handleResponse[OsvVulnerability](
         requests.get(
-          url   = s"${baseUrl}/v1/vulns/${id}",
-          check = false
+          url            = s"${baseUrl}/v1/vulns/${id}",
+          check          = false,
+          connectTimeout = connectTimeoutMs,
+          readTimeout    = readTimeoutMs
         )
       )
 
@@ -118,7 +134,15 @@ package object v1 {
   }
 
   object Client {
-    def apply(baseUrl: String = "https://api.osv.dev"): Client =
-      new Client(if (baseUrl.endsWith("/")) baseUrl.substring(0, baseUrl.length - 1) else baseUrl)
+    def apply(
+        baseUrl: String                  = "https://api.osv.dev",
+        connectTimeout: Option[Duration] = None,
+        readTimeout: Option[Duration]    = None
+    ): Client =
+      new Client(
+        if (baseUrl.endsWith("/")) baseUrl.substring(0, baseUrl.length - 1) else baseUrl,
+        connectTimeout,
+        readTimeout
+      )
   }
 }

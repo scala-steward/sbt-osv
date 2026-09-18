@@ -8,7 +8,12 @@ package net.nmoncho.sbt.osv
 
 import java.io.File
 import java.sql.Connection
+import java.util.concurrent.Executors
 
+import scala.concurrent.Await
+import scala.concurrent.ExecutionContext
+import scala.concurrent.Future
+import scala.concurrent.duration.Duration
 import scala.util.control.NonFatal
 
 import net.nmoncho.sbt.osv.api.OsvVulnerability
@@ -67,8 +72,12 @@ object Engine {
     }
 
     new Default(
-      settings           = settings,
-      client             = Client(settings.baseUrl),
+      settings = settings,
+      client   = Client(
+        settings.baseUrl,
+        connectTimeout = settings.connectionTimeout,
+        readTimeout    = settings.connectionReadTimeout
+      ),
       db                 = ConnectionProvider.h2InFile(dbFile),
       repositoryProvider = connection => {
         ConnectionProvider.createSchema(connection)
@@ -164,7 +173,7 @@ object Engine {
         failCvssScore: Double,
         dependencies: Set[Dependency],
         suppressions: Set[SuppressionRule]
-    )(implicit log: Logger): ScanResult = {
+    )(implicit log: Logger): ScanResult = withAnalysisTimeout {
       val ((queries, toQuery), vulnerabilitiesInDB) = dependencies.foldLeft(
         Vector.empty[V1Query] -> Vector.empty[Dependency] -> Map
           .empty[Dependency, Set[Vulnerability]]
@@ -202,6 +211,36 @@ object Engine {
         suppressions
       )
     }
+
+    /** Bounds the analysis by `settings.analysisTimeout` when set. The work runs on a
+      * dedicated thread and, if it overruns, that thread is interrupted and a clear
+      * error is raised instead of letting the build hang indefinitely. When no timeout
+      * is configured the work runs inline with no extra threading.
+      */
+    private def withAnalysisTimeout[A](body: => A): A =
+      settings.analysisTimeout match {
+        case Some(timeout) =>
+          val executor                      = Executors.newSingleThreadExecutor()
+          implicit val ec: ExecutionContext = ExecutionContext.fromExecutorService(executor)
+
+          try {
+            Await.result(
+              Future(body),
+              Duration(timeout.toMillis, java.util.concurrent.TimeUnit.MILLISECONDS)
+            )
+          } catch {
+            case ex: java.util.concurrent.TimeoutException =>
+              throw new IllegalStateException(
+                s"OSV analysis exceeded the configured timeout of [${timeout.toString}]",
+                ex
+              )
+          } finally {
+            executor.shutdownNow()
+          }
+
+        case None =>
+          body
+      }
 
     /** Removes withdrawn (retracted) advisories from the findings. A withdrawn OSV
       * entry is no longer valid, so keeping it would inflate the vulnerability count

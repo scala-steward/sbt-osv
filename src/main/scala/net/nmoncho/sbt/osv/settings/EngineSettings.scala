@@ -14,8 +14,33 @@ import java.time.Duration
   * @param baseUrl base url for OSV API
   * @param cacheEviction how long to wait until going to the API again for a given query
   * @param dataDirectory where to place the data (eg. the database)
+  * @param analysisTimeout maximum wall-clock time allowed for the whole analysis (`None` = unbounded)
+  * @param connectionTimeout HTTP connection timeout for OSV API calls (`None` = library default)
+  * @param connectionReadTimeout HTTP read timeout for OSV API calls (`None` = library default)
   */
-case class EngineSettings(baseUrl: String, cacheEviction: Duration, dataDirectory: Option[File]) {
+case class EngineSettings(
+    baseUrl: String,
+    cacheEviction: Duration,
+    dataDirectory: Option[File],
+    analysisTimeout: Option[Duration]       = None,
+    connectionTimeout: Option[Duration]     = None,
+    connectionReadTimeout: Option[Duration] = None
+) {
+
+  /** Returns a copy with the given timeouts applied. A provided value wins over the
+    * one already held (which lets the standalone `osv*Timeout` settings override
+    * whatever is carried in `osvEngineSettings`).
+    */
+  def withTimeouts(
+      analysis: Option[Duration],
+      connection: Option[Duration],
+      connectionRead: Option[Duration]
+  ): EngineSettings =
+    copy(
+      analysisTimeout       = analysis.orElse(analysisTimeout),
+      connectionTimeout     = connection.orElse(connectionTimeout),
+      connectionReadTimeout = connectionRead.orElse(connectionReadTimeout)
+    )
 
   def toPrettyString(): String =
     s"""EngineSettings:
@@ -24,6 +49,9 @@ case class EngineSettings(baseUrl: String, cacheEviction: Duration, dataDirector
        |  dataDirectory: ${dataDirectory
         .getOrElse(EngineSettings.findDataDirectory())
         .getAbsolutePath}
+       |  analysisTimeout: ${analysisTimeout.map(_.toString).getOrElse("unbounded")}
+       |  connectionTimeout: ${connectionTimeout.map(_.toString).getOrElse("default")}
+       |  connectionReadTimeout: ${connectionReadTimeout.map(_.toString).getOrElse("default")}
        |""".stripMargin
 
 }

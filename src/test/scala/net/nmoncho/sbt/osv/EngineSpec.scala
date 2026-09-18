@@ -11,6 +11,7 @@ import java.sql.Connection
 import java.time.Instant
 
 import net.nmoncho.sbt.osv.api.OsvVulnerability
+import net.nmoncho.sbt.osv.api.RpcStatus
 import net.nmoncho.sbt.osv.api.v1.Client
 import net.nmoncho.sbt.osv.api.v1.V1BatchVulnerabilityList
 import net.nmoncho.sbt.osv.api.v1.V1VulnerabilityList
@@ -19,6 +20,7 @@ import net.nmoncho.sbt.osv.storage.ConnectionProvider
 import net.nmoncho.sbt.osv.storage.VulnerabilityRepository
 import org.mockito.ArgumentMatchers._
 import org.mockito.Mockito._
+import org.mockito.invocation.InvocationOnMock
 import sbt.Logger
 
 class EngineSpec extends munit.FunSuite {
@@ -270,6 +272,43 @@ class EngineSpec extends munit.FunSuite {
     val ids = result.vulnerabilities.getOrElse(suppressionDep, Set.empty).map(_.id)
     assert(ids.contains("GHSA-active"), s"active advisory should be reported: $ids")
     assert(!ids.contains("GHSA-withdrawn"), s"withdrawn advisory must be excluded: $ids")
+  }
+
+  // -------------------------------------------------------------------------
+  // Analysis timeout bounds the whole analysis
+  // -------------------------------------------------------------------------
+
+  private def engineWith(settings: EngineSettings, client: Client): Engine.Default = {
+    val repo = mock(classOf[VulnerabilityRepository])
+    when(repo.findCached(any(), any())).thenReturn(None)
+    new Engine.Default(settings, client, ConnectionProvider.h2InMemory(), (_: Connection) => repo)
+  }
+
+  test("analysis exceeding the configured timeout fails with a clear error") {
+    val client                                             = mock(classOf[Client])
+    val batch: Either[RpcStatus, V1BatchVulnerabilityList] = Right(V1BatchVulnerabilityList(None))
+    when(client.queryBatch(any())(any())).thenAnswer { (_: InvocationOnMock) =>
+      Thread.sleep(3000) // longer than the timeout below
+      batch
+    }
+    val settings =
+      EngineSettings.Default.copy(analysisTimeout = Some(java.time.Duration.ofMillis(100)))
+
+    val ex = intercept[IllegalStateException] {
+      engineWith(settings, client).analyzeDependencies(0.0, Set(dbDep), Set.empty)
+    }
+    assert(ex.getMessage.toLowerCase.contains("timeout"), ex.getMessage)
+  }
+
+  test("analysis within the configured timeout completes normally") {
+    val client = mock(classOf[Client])
+    when(client.queryBatch(any())(any())).thenReturn(Right(V1BatchVulnerabilityList(None)))
+    val settings =
+      EngineSettings.Default.copy(analysisTimeout = Some(java.time.Duration.ofSeconds(10)))
+
+    val result = engineWith(settings, client).analyzeDependencies(0.0, Set(dbDep), Set.empty)
+
+    assert(result.vulnerabilities.getOrElse(dbDep, Set.empty).isEmpty)
   }
 
 }
