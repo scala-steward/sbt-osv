@@ -14,7 +14,7 @@ import sbt.Keys._
 import sbt._
 import sbt.plugins.JvmPlugin
 
-/** Generates the XML Suppression File containing suppressions specified
+/** Generates the `.osvignore` suppression file containing suppressions specified
   * using [[SuppressionRule]]s
   */
 object GenerateSuppressions {
@@ -69,8 +69,8 @@ object GenerateSuppressions {
       Seq.empty[SuppressionRule]
     }
 
-  /** Creates a file containing [[SuppressionRule]]s defined in the [[net.nmoncho.sbt.dependencycheck.settings.SuppressionSettings.files]] field
-    * and the [[net.nmoncho.sbt.dependencycheck.settings.SuppressionSettings.suppressions]] field.
+  /** Creates a file containing the [[SuppressionRule]]s defined in the `osvSuppressions`
+    * `file` and `suppressions` fields.
     *
     * @return a sequence of files if packaged suppressions are enabled, empty otherwise.
     */
@@ -103,8 +103,7 @@ object GenerateSuppressions {
   /** Writes the exported packaged suppression rules
     *
     * Packaged suppressions rules will only consider the rules defined in the
-    * [[net.nmoncho.sbt.dependencycheck.settings.SuppressionSettings.files]] field
-    * and the [[net.nmoncho.sbt.dependencycheck.settings.SuppressionSettings.suppressions]] field.
+    * `osvSuppressions` `file` and `suppressions` fields.
     *
     * @param file file to write to
     * @param settings rules settings, including files and

@@ -19,7 +19,7 @@ object Keys {
   )
 
   lazy val osvSkip: SettingKey[Boolean] = settingKey(
-    "Skips this project on the dependency-check analysis."
+    "Skips this project during the OSV vulnerability scan."
   )
 
   lazy val osvScopes: SettingKey[ScopesSettings] = settingKey(
@@ -27,7 +27,7 @@ object Keys {
   )
 
   lazy val osvAnalysisTimeout: SettingKey[Option[Duration]] =
-    settingKey("Set the analysis timeout.")
+    settingKey("Maximum wall-clock time allowed for the whole OSV analysis. Unbounded when unset.")
 
   lazy val osvOutputDirectory: SettingKey[File] =
     settingKey("The location to write the report(s).")
@@ -36,7 +36,7 @@ object Keys {
     settingKey("Scan engine settings.")
 
   lazy val osvSuppressions: SettingKey[SuppressionSettings] = settingKey(
-    "Combines a sequence of file paths, or URLs to the XML suppression files, with any hosted suppressions the analysis should be using. Suppressions are used to ignore false positives."
+    "Suppression settings used to ignore known false positives: inline rules, an `.osvignore` file, and optionally suppressions packaged inside dependency JARs."
   )
 
   lazy val osvReportFormats: SettingKey[Seq[ReportGenerator]] = settingKey(
@@ -44,11 +44,11 @@ object Keys {
   )
 
   lazy val osvConnectionTimeout: SettingKey[Option[Duration]] = settingKey(
-    "Sets the URL Connection Timeout (in milliseconds) used when downloading external data."
+    "HTTP connection timeout for OSV API requests. Falls back to the client default (10 seconds) when unset."
   )
 
   lazy val osvConnectionReadTimeout: SettingKey[Option[Duration]] = settingKey(
-    "Sets the URL Connection Read Timeout (in milliseconds) used when downloading external data."
+    "HTTP read timeout for OSV API requests. Falls back to the client default (10 seconds) when unset."
   )
 
   // Tasks
@@ -56,9 +56,9 @@ object Keys {
     "Runs osv scan against the project and generates a report per sub project."
   )
   lazy val osvListSettings: InputKey[Unit] = inputKey(
-    "Runs osv against the project and generates a report per sub project."
+    "Prints the effective osvScan settings for each sub-project, without running a scan."
   )
   lazy val osvListSuppressions: InputKey[Unit] = inputKey(
-    "List suppression rules added to the Owasp Engine which are defined in the project definition (ie. build.sbt), or are imported packaged suppressions."
+    "Lists the active suppression rules for each project, both those defined in the project (build.sbt or .osvignore) and those imported from packaged suppressions."
   )
 }

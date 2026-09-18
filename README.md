@@ -82,6 +82,24 @@ sbt osvListSuppressions
 sbt 'osvListSuppressions all-projects'
 ```
 
+### `osvListSettings`
+
+Prints the effective `osvScan` settings for each sub-project (scopes, engine settings,
+output directory, and the fail-on-CVSS threshold) without running a scan. Useful for
+verifying configuration.
+
+```
+sbt osvListSettings [argument]
+```
+
+| Argument       | Description                                                     |
+|----------------|-----------------------------------------------------------------|
+| *(none)*       | List settings per sub-project (default).                        |
+| `per-project`  | Explicit alias for the default: list settings per sub-project.  |
+| `all-projects` | List settings aggregated across all projects.                   |
+
+The same information can be printed as part of a scan with `sbt 'osvScan list-settings'`.
+
 
 ## Settings
 

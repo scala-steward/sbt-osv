@@ -12,11 +12,12 @@ import sbt.Keys._
 import sbt._
 import sbt.plugins.JvmPlugin
 
-/** Lists Suppression Rules that are added to the Owasp Engine by defining them on
-  * the project definition (ie. `build.sbt`) or imported as packaged suppressions rules.
+/** Lists the suppression rules in effect for the scan, whether defined in the project
+  * definition (ie. `build.sbt` or an `.osvignore` file) or imported as packaged
+  * suppression rules from dependency JARs.
   *
-  * The goal of this task is to make visible to users what suppressions are being added
-  * by the SBT plugin but not through the usual DependencyCheck configuration (e.g. properties file)
+  * The goal of this task is to make visible to users which suppressions are being
+  * applied, since they can come from several sources.
   */
 object ListSuppressions {
 
