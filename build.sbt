@@ -45,6 +45,7 @@ lazy val root = (project in file("."))
       "-Ywarn-unused"),
     libraryDependencies ++= Seq(
       cvssCalculator,
+      commonmark,
       packageUrlJava,
       requests,
       uPickle,

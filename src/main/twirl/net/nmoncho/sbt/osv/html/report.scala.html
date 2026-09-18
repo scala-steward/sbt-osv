@@ -228,8 +228,25 @@
     .vuln-details {
       font-size: 13px;
       color: #57606a;
-      white-space: pre-wrap;
       margin-bottom: 10px;
+    }
+
+    .vuln-details p {
+      margin: 0 0 8px;
+    }
+
+    .vuln-details p:last-child {
+      margin-bottom: 0;
+    }
+
+    .vuln-details a {
+      color: #0969da;
+    }
+
+    .vuln-details code {
+      background: #f6f8fa;
+      padding: 1px 4px;
+      border-radius: 4px;
     }
 
     /* ── Metadata rows ────────────────────────────────────── */
@@ -538,7 +555,7 @@
         <details>
           <summary>Show details</summary>
           <div class="details-body">
-            <md class="vuln-details">@vuln.details</md>
+            <div class="vuln-details">@net.nmoncho.sbt.osv.html.MarkdownRenderer.render(vuln.details)</div>
           </div>
         </details>
         }
@@ -588,8 +605,6 @@
 
   </main>
 </div>
-
-<script src="https://cdn.jsdelivr.net/gh/MarketingPipeline/Markdown-Tag/markdown-tag.js"></script>
 
 </body>
 </html>

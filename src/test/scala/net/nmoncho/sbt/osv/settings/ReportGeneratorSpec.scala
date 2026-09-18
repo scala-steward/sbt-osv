@@ -35,6 +35,32 @@ class ReportGeneratorSpec extends munit.FunSuite with TestUtils {
     )
   }
 
+  test("HTML report is self-contained: no external scripts, details rendered server-side") {
+    val dep           = Dependency("org.example", "lib", "1.2.3", new File("lib-1.2.3.jar"))
+    val vulnerability = Vulnerability(
+      id      = "GHSA-xxxx",
+      aliases = Set.empty,
+      scores  = Set.empty,
+      fixed   = Vulnerability.FixedStatus.Unknown,
+      source  = OsvVulnerability(
+        "GHSA-xxxx",
+        "1.0.0",
+        "a summary",
+        "This is a **serious** issue.",
+        Seq.empty
+      )
+    )
+
+    val html = ReportGenerator.HTML.generate(Map(dep -> Set(vulnerability)))
+
+    assert(!html.contains("cdn.jsdelivr"), "report must not reference an external CDN")
+    assert(!html.contains("<script"), "report must not load any external script")
+    assert(!html.contains("<md "), "the markdown-tag element must be gone")
+    assert(html.contains("vuln-details"), "details block should be present")
+    // Details are rendered from markdown server-side.
+    assert(html.contains("<strong>serious</strong>"), "markdown should be rendered to HTML")
+  }
+
   test("JSON report name is osv-report.json") {
     assertEquals(ReportGenerator.JSON.reportName("anything"), "osv-report.json")
   }
