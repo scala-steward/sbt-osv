@@ -30,10 +30,19 @@ object SummaryReport {
 
   private final val NewLine = System.getProperty("line.separator", "\n").intern()
 
+  /** Highest-ranked score of a vulnerability, or `None` when it carries no score. */
+  private def topScore(v: Vulnerability): Option[Vulnerability.Score] =
+    if (v.scores.isEmpty) None else Some(v.scores.max)
+
   private implicit val ordering: Ordering[Vulnerability] = (x: Vulnerability, y: Vulnerability) => {
-    val xScore = x.scores.max
-    val yScore = y.scores.max
-    val comp   = Vulnerability.Score.descendingOrder.compare(xScore, yScore)
+    // Scoreless vulnerabilities sort last, so scored findings surface first.
+    val comp = (topScore(x), topScore(y)) match {
+      case (Some(xScore), Some(yScore)) =>
+        Vulnerability.Score.descendingOrder.compare(xScore, yScore)
+      case (Some(_), None) => -1
+      case (None, Some(_)) => 1
+      case (None, None) => 0
+    }
 
     if (comp == 0) {
       x.id.compareTo(y.id)
@@ -101,7 +110,7 @@ object SummaryReport {
     // So dependency with the highest vulnerability shows first
     val inDescendingOrder = analysisResult.toSeq
       .sortBy { case (_, vulnerabilities) =>
-        vulnerabilities.map(_.scores.max).headOption.map(_.score).getOrElse(0.0)
+        vulnerabilities.flatMap(topScore).map(_.score).headOption.getOrElse(0.0)
       }(ord.reverse)
 
     inDescendingOrder

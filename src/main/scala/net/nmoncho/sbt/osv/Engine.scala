@@ -114,7 +114,7 @@ object Engine {
 
         repository.findCached(q, settings.cacheEviction) match {
           case Some(inDB) =>
-            val vs = inDB.flatMap(_.toVulnerability()).toSet
+            val vs = inDB.map(_.toVulnerability()).toSet
             toProcess -> (vulns + (d -> vs))
 
           case None =>

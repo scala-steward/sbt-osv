@@ -118,4 +118,42 @@ class SummaryReportSpec extends munit.FunSuite {
     )
   }
 
+  // -------------------------------------------------------------------------
+  // Scoreless vulnerabilities
+  // -------------------------------------------------------------------------
+
+  test("AllVulnerabilities – a scoreless vulnerability is listed and does not crash the summary") {
+    val scoreless = vulnerability("GHSA-noscore") // no scores at all
+    val scored    = vulnerability("CVE-HIGH", score("CVSS_V3", 9.0))
+
+    val result = SummaryReport.AllVulnerabilities.buildSummary(
+      Map(dep -> Set(scored, scoreless)),
+      failCvssScore = 11.0
+    )
+
+    assert(
+      result.contains("GHSA-noscore"),
+      s"scoreless vulnerability should still appear:\n$result"
+    )
+    assert(result.contains("CVE-HIGH"), s"scored vulnerability should appear:\n$result")
+    assert(
+      result.indexOf("CVE-HIGH") < result.indexOf("GHSA-noscore"),
+      s"scored vulnerability should sort before the scoreless one:\n$result"
+    )
+  }
+
+  test("AllVulnerabilities – a dependency with only scoreless vulnerabilities does not crash") {
+    val scoreless = vulnerability("GHSA-noscore")
+
+    val result = SummaryReport.AllVulnerabilities.buildSummary(
+      Map(dep -> Set(scoreless)),
+      failCvssScore = 11.0
+    )
+
+    assert(
+      result.contains("GHSA-noscore"),
+      s"scoreless vulnerability should still appear:\n$result"
+    )
+  }
+
 }
