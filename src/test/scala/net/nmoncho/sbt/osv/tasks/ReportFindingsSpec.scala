@@ -23,14 +23,20 @@ class ReportFindingsSpec extends munit.FunSuite {
     val messages: ListBuffer[String] = ListBuffer.empty[String]
 
     override def log(level: Level.Value, message: => String): Unit = { messages += message; () }
-    override def success(message: => String): Unit                  = { messages += message; () }
-    override def trace(t: => Throwable): Unit                       = ()
+    override def success(message: => String): Unit                 = { messages += message; () }
+    override def trace(t: => Throwable): Unit                      = ()
   }
 
   private val dep = Dependency("org", "artifact", "1.0", new File("artifact-1.0.jar"))
 
   private def osvSource(id: String): OsvVulnerability =
-    OsvVulnerability(id = id, schemaVersion = "1.0.0", summary = "", details = "", affected = Seq.empty)
+    OsvVulnerability(
+      id            = id,
+      schemaVersion = "1.0.0",
+      summary       = "",
+      details       = "",
+      affected      = Seq.empty
+    )
 
   private def vuln(id: String, scores: Vulnerability.Score*): Vulnerability =
     Vulnerability(id, Set.empty, scores.toSet, Vulnerability.FixedStatus.Unknown, osvSource(id))

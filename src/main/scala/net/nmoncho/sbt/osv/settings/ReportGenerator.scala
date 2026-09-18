@@ -39,4 +39,51 @@ object ReportGenerator {
     }
   }
 
+  /** Machine-readable JSON report, suitable for CI pipelines and downstream tooling. */
+  case object JSON extends ReportGenerator {
+
+    override def reportName(projectName: String): String = "osv-report.json"
+
+    override def generate(result: Map[Dependency, Set[Vulnerability]]): String = {
+      val dependencies = result.toSeq
+        .sortBy(_._1.coordinates)
+        .map { case (dependency, vulnerabilities) =>
+          ujson.Obj(
+            "coordinates" -> ujson.Str(dependency.coordinates),
+            "groupId" -> ujson.Str(dependency.groupId),
+            "artifactId" -> ujson.Str(dependency.artifactId),
+            "version" -> ujson.Str(dependency.revision),
+            "purl" -> ujson.Str(dependency.purl),
+            "file" -> ujson.Str(dependency.file.getName),
+            "vulnerabilities" -> ujson.Arr(
+              vulnerabilities.toSeq.sortBy(_.id).map { vulnerability =>
+                ujson.Obj(
+                  "id" -> ujson.Str(vulnerability.id),
+                  "aliases" -> ujson.Arr(vulnerability.aliases.toSeq.sorted.map(ujson.Str(_)): _*),
+                  "summary" -> ujson.Str(vulnerability.source.summary),
+                  "scores" -> ujson.Arr(
+                    vulnerability.scores.toSeq.sortBy(_.name).map { score =>
+                      ujson.Obj(
+                        "type" -> ujson.Str(score.name),
+                        "vector" -> ujson.Str(score.vector),
+                        "score" -> ujson.Num(score.score),
+                        "severity" -> ujson.Str(Vulnerability.Score.scoreSeverity(score.vector))
+                      )
+                    }: _*
+                  ),
+                  "references" -> ujson.Arr(
+                    vulnerability.source.references
+                      .getOrElse(Seq.empty)
+                      .map(reference => ujson.Str(reference.url)): _*
+                  )
+                )
+              }: _*
+            )
+          )
+        }
+
+      ujson.write(ujson.Obj("dependencies" -> ujson.Arr(dependencies: _*)), indent = 2)
+    }
+  }
+
 }
