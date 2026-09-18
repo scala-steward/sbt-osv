@@ -13,6 +13,7 @@ import java.time.Instant
 import net.nmoncho.sbt.osv.api.OsvVulnerability
 import net.nmoncho.sbt.osv.api.RpcStatus
 import net.nmoncho.sbt.osv.api.v1.Client
+import net.nmoncho.sbt.osv.api.v1.V1BatchQuery
 import net.nmoncho.sbt.osv.api.v1.V1BatchVulnerabilityList
 import net.nmoncho.sbt.osv.api.v1.V1VulnerabilityList
 import net.nmoncho.sbt.osv.settings.EngineSettings
@@ -336,6 +337,44 @@ class EngineSpec extends munit.FunSuite {
     }
     assert(ex.getMessage.contains("OSV API was unavailable"), ex.getMessage)
     assert(ex.getMessage.contains("connect timed out"), ex.getMessage)
+  }
+
+  // -------------------------------------------------------------------------
+  // querybatch is chunked to OSV's 1000-query-per-request cap
+  // -------------------------------------------------------------------------
+
+  test("querybatch is split into chunks no larger than the OSV per-request cap") {
+    val client = mock(classOf[Client])
+    val repo   = mock(classOf[VulnerabilityRepository])
+    when(repo.findCached(any(), any())).thenReturn(None) // all uncached -> all go to the API
+
+    val batchSizes = scala.collection.mutable.ListBuffer.empty[Int]
+    when(client.queryBatch(any())(any())).thenAnswer { (inv: InvocationOnMock) =>
+      val batch = inv.getArgument[V1BatchQuery](0)
+      batchSizes += batch.queries.size
+      // Return a result aligned with the request: one empty entry per query.
+      val results = batch.queries.map(_ => V1BatchVulnerabilityList.Value(None)).toVector
+      Right(V1BatchVulnerabilityList(Some(results))): Either[RpcStatus, V1BatchVulnerabilityList]
+    }
+
+    val engine = new Engine.Default(
+      EngineSettings.Default,
+      client,
+      ConnectionProvider.h2InMemory(),
+      (_: Connection) => repo
+    )
+
+    val deps =
+      (1 to 1500).map(i => Dependency("org.foo", s"lib-$i", "1.0.0", new File(s"lib-$i.jar"))).toSet
+
+    engine.analyzeDependencies(0.0, deps, Set.empty)
+
+    assertEquals(batchSizes.size, 2, s"expected 2 chunks for 1500 deps, got ${batchSizes.toList}")
+    assert(
+      batchSizes.forall(_ <= Engine.MaxBatchQueries),
+      s"a chunk exceeded ${Engine.MaxBatchQueries}: ${batchSizes.toList}"
+    )
+    assertEquals(batchSizes.sum, 1500, "every dependency should be queried exactly once")
   }
 
 }

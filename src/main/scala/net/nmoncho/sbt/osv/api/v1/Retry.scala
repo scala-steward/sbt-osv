@@ -22,7 +22,7 @@ private[v1] object Retry {
   }
 
   object Attempt {
-    final case class Done[A](value: A)      extends Attempt[A]
+    final case class Done[A](value: A) extends Attempt[A]
     final case class Retryable[A](value: A) extends Attempt[A]
   }
 

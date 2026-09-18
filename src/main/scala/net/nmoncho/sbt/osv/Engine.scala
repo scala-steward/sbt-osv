@@ -61,6 +61,11 @@ object Engine {
 
   final val DefaultOsvDB = "osv.db"
 
+  /** OSV enforces a hard maximum of 1000 queries per `querybatch` request, so larger
+    * dependency sets (cold cache, big aggregate builds) must be split into chunks.
+    */
+  final val MaxBatchQueries = 1000
+
   def create(settings: EngineSettings): Engine = {
     val dbFile = settings.dataDirectory match {
       case Some(parent) if parent.exists() && parent.isDirectory =>
@@ -192,20 +197,27 @@ object Engine {
         }
       }
 
-      val vulnerabilitiesInAPI = if (queries.nonEmpty) {
-        client.queryBatch(V1BatchQuery(queries)) match {
-          case Right(V1BatchVulnerabilityList(Some(result))) =>
-            handleBatchResults(toQuery.zip(result))
+      // Split the uncached queries into chunks no larger than OSV's per-request cap
+      // and merge the per-chunk results back together in dependency order.
+      val vulnerabilitiesInAPI: Map[Dependency, Set[Vulnerability]] =
+        toQuery
+          .zip(queries)
+          .grouped(MaxBatchQueries)
+          .foldLeft(Map.empty[Dependency, Set[Vulnerability]]) { (acc, chunk) =>
+            val chunkDeps    = chunk.map(_._1)
+            val chunkQueries = chunk.map(_._2)
 
-          case Right(V1BatchVulnerabilityList(None)) =>
-            Map.empty[Dependency, Set[Vulnerability]]
+            client.queryBatch(V1BatchQuery(chunkQueries)) match {
+              case Right(V1BatchVulnerabilityList(Some(result))) =>
+                acc ++ handleBatchResults(chunkDeps.zip(result))
 
-          case Left(value) =>
-            apiUnavailable(value)
-        }
-      } else {
-        Map.empty
-      }
+              case Right(V1BatchVulnerabilityList(None)) =>
+                acc
+
+              case Left(value) =>
+                apiUnavailable(value)
+            }
+          }
 
       processDependencies(
         excludeWithdrawn(vulnerabilitiesInDB ++ vulnerabilitiesInAPI),
