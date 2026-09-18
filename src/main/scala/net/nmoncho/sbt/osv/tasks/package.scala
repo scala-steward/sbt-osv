@@ -137,19 +137,48 @@ package object tasks {
     if (reportFormats.isEmpty) {
       log.info("No Report Format was selected for the OSV Analysis")
     } else {
-      log.info(s"Writing OSV reports to [${outputDir.getAbsolutePath}]")
-      reportFormats.foreach(reportFormat =>
-        engine.writeReports(
-          reportFormat.reportName(projectName),
-          outputDir,
-          reportFormat.generate(result.vulnerabilities)
-        )
-      )
+      reportFormats.foreach { reportFormat =>
+        val reportName = reportFormat.reportName(projectName)
+        engine.writeReports(reportName, outputDir, reportFormat.generate(result.vulnerabilities))
+        log.info(s"Wrote OSV report to [${new File(outputDir, reportName).getAbsolutePath}]")
+      }
     }
 
-    failOnFoundVulnerabilities(failCvssScore, result, projectName, summaryReport)
+    // Always surface what was found, whether or not the build is going to fail, so a
+    // default (never-fail) run does not look like a clean bill of health.
+    reportFindings(projectName, result, failCvssScore, summaryReport)
+
+    failOnFoundVulnerabilities(failCvssScore, result)
 
     result
+  }
+
+  /** Logs a findings summary after every scan, independent of the fail decision.
+    * Distinguishes "no vulnerabilities found" from "found, none above the threshold"
+    * so a passing run never reads as a clean bill of health when findings exist.
+    */
+  private def reportFindings(
+      name: String,
+      scanResult: Engine.ScanResult,
+      failCvssScore: Double,
+      summaryReport: SummaryReport
+  )(implicit log: Logger): Unit = {
+    val total     = scanResult.vulnerabilities.valuesIterator.map(_.size).sum
+    val offending =
+      scanResult.vulnerabilities.valuesIterator.flatten.count(_.failing(failCvssScore))
+
+    if (total == 0) {
+      log.info(s"No known vulnerabilities found for [$name].")
+    } else {
+      val summary = summaryReport.buildSummary(scanResult.vulnerabilities, failCvssScore)
+      val header  =
+        if (offending > 0)
+          s"Found [$total] known vulnerabilities for [$name], [$offending] of which exceed the CVSS threshold of [$failCvssScore]:"
+        else
+          s"Found [$total] known vulnerabilities for [$name] (none exceed the CVSS threshold of [$failCvssScore]):"
+
+      log.warn(s"\n\n$header\n\n$summary\nSee the OSV report for more details.\n")
+    }
   }
 
   private def getDependencies(
@@ -176,17 +205,13 @@ package object tasks {
 
   private def failOnFoundVulnerabilities(
       failCvssScore: Double,
-      scanResult: Engine.ScanResult,
-      name: String,
-      summaryReport: SummaryReport
-  )(implicit log: Logger): Unit = {
+      scanResult: Engine.ScanResult
+  ): Unit = {
     val hasFailingVulnerabilities = scanResult.vulnerabilities.exists { case (_, vulnerabilities) =>
       vulnerabilities.exists(_.failing(failCvssScore))
     }
 
     if (hasFailingVulnerabilities) {
-      SummaryReport.showSummary(name, scanResult.vulnerabilities, failCvssScore, summaryReport)
-
       throw new VulnerabilityFoundException(
         s"Vulnerability with CVSS score higher than [$failCvssScore] found",
         scanResult

@@ -91,7 +91,8 @@ object Scan {
                   case Failure(t) => throw t
 
                   case Success(_) =>
-                    log.info(s"No offending vulnerabilities found for [${checkSettings.name}]")
+                    // Findings were already reported by `analyzeProject`; nothing to add.
+                    ()
                 }
               }
             }

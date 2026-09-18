@@ -7,8 +7,6 @@
 package net.nmoncho.sbt.osv
 package settings
 
-import sbt.Logger
-
 /** Trait used to define how Summaries are generated after an analysis
   */
 trait SummaryReport {
@@ -49,30 +47,6 @@ object SummaryReport {
     } else {
       comp
     }
-  }
-
-  /** Shows the summary to the console
-    *
-    * @param name           project name
-    * @param analysisResult scanned dependencies
-    * @param failCvssScore  failing CVSS Score
-    * @param report         report type
-    * @param log            logger
-    */
-  def showSummary(
-      name: String,
-      analysisResult: Map[Dependency, Set[Vulnerability]],
-      failCvssScore: Double,
-      report: SummaryReport
-  )(
-      implicit log: Logger
-  ): Unit = {
-    val summary = report.buildSummary(analysisResult, failCvssScore)
-
-    log.warn(
-      s"\n\nOne or more dependencies were identified with known vulnerabilities in [$name]:\n\n$summary" +
-        "\n\nSee the OSV report for more details.\n\n"
-    )
   }
 
   /** Processes a vulnerability to include in a report
