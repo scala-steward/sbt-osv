@@ -17,6 +17,7 @@ import scala.concurrent.duration.Duration
 import scala.util.control.NonFatal
 
 import net.nmoncho.sbt.osv.api.OsvVulnerability
+import net.nmoncho.sbt.osv.api.RpcStatus
 import net.nmoncho.sbt.osv.api.v1.Client
 import net.nmoncho.sbt.osv.api.v1.V1BatchQuery
 import net.nmoncho.sbt.osv.api.v1.V1BatchVulnerabilityList
@@ -200,7 +201,7 @@ object Engine {
             Map.empty[Dependency, Set[Vulnerability]]
 
           case Left(value) =>
-            throw new IllegalStateException(s"Failed to query OSV API. Cause: ${value.toString}")
+            apiUnavailable(value)
         }
       } else {
         Map.empty
@@ -335,7 +336,7 @@ object Engine {
               dep -> value.vulnerabilities()
 
             case Left(value) =>
-              throw new IllegalStateException(s"Failed to query OSV API. Cause: ${value.toString}")
+              apiUnavailable(value)
           }
 
         // dependency has no found vulnerabilities
@@ -343,6 +344,17 @@ object Engine {
           dep -> Set.empty[Vulnerability]
       }.toMap
     }
+
+    /** Aborts the scan with a clear, actionable message when the OSV API could not be
+      * reached (after retries). The scan fails closed: an unreachable data source must
+      * not be silently reported as "no vulnerabilities".
+      */
+    private def apiUnavailable(status: RpcStatus): Nothing =
+      throw new IllegalStateException(
+        "Could not complete the OSV vulnerability scan because the OSV API was unavailable" +
+          status.message.map(m => s": $m").getOrElse(".") +
+          " Verify network connectivity and the OSV API status, then retry."
+      )
 
     override def close(): Unit =
       // Best-effort: closing the cache must never fail the build either (e.g. when

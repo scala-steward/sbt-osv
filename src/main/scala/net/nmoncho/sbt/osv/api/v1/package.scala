@@ -10,6 +10,8 @@ package api
 import java.time.Duration
 import java.time.Instant
 
+import scala.util.control.NonFatal
+
 import requests.Response
 import sbt.Logger
 
@@ -30,6 +32,12 @@ package object v1 {
     // 10s default so behaviour is unchanged unless the user configures a timeout.
     private val connectTimeoutMs: Int = connectTimeout.map(_.toMillis.toInt).getOrElse(10000)
     private val readTimeoutMs: Int    = readTimeout.map(_.toMillis.toInt).getOrElse(10000)
+
+    // Transient OSV API failures (network blips, HTTP 429, 5xx) are retried a few
+    // times with a short exponential back-off before the call is reported as failed.
+    private val maxAttempts: Int                  = 3
+    private def backoff(attempt: Int): Unit       = Thread.sleep(500L * (attempt + 1))
+    private def isTransient(status: Int): Boolean = status == 429 || status >= 500
 
     /** Queries the vulnerabilities for a given package
       *
@@ -112,23 +120,53 @@ package object v1 {
         )
       )
 
+    /** Executes `request` (re-running it on retry) and decodes the response, retrying
+      * transient failures. A connectivity failure or an exhausted retry becomes a clean
+      * `Left(RpcStatus)` rather than a raw exception propagating out of the client.
+      */
     private def handleResponse[A: Reader](
-        response: Response
+        request: => Response
     )(implicit log: Logger): Either[RpcStatus, A] =
-      try {
-        if (response.is2xx) {
-          Right(read[A](response.text()))
-        } else {
-          Left(read[RpcStatus](response.text()))
-        }
-      } catch {
-        case t: Throwable =>
-          logThrowable(t)
-          Left(
-            RpcStatus(
-              Some(response.statusCode),
-              Some(s"Something went wrong. Cause: ${t.getMessage}")
+      Retry.retrying(maxAttempts, backoff) {
+        try {
+          val response = request
+
+          if (response.is2xx) {
+            try Retry.Attempt.Done(Right(read[A](response.text())))
+            catch {
+              case NonFatal(t) =>
+                logThrowable(t)
+                Retry.Attempt.Done(
+                  Left(
+                    RpcStatus(
+                      Some(response.statusCode),
+                      Some(s"Could not parse the OSV API response. Cause: ${t.getMessage}")
+                    )
+                  )
+                )
+            }
+          } else if (isTransient(response.statusCode)) {
+            Retry.Attempt.Retryable(Left(parseError(response)))
+          } else {
+            Retry.Attempt.Done(Left(parseError(response)))
+          }
+        } catch {
+          case NonFatal(t) =>
+            logThrowable(t)
+            Retry.Attempt.Retryable(
+              Left(RpcStatus(None, Some(s"Could not reach the OSV API. Cause: ${t.getMessage}")))
             )
+        }
+      }
+
+    private def parseError(response: Response)(implicit log: Logger): RpcStatus =
+      try read[RpcStatus](response.text())
+      catch {
+        case NonFatal(t) =>
+          logThrowable(t)
+          RpcStatus(
+            Some(response.statusCode),
+            Some(s"Unexpected OSV API response (HTTP ${response.statusCode})")
           )
       }
   }

@@ -311,4 +311,31 @@ class EngineSpec extends munit.FunSuite {
     assert(result.vulnerabilities.getOrElse(dbDep, Set.empty).isEmpty)
   }
 
+  // -------------------------------------------------------------------------
+  // An unavailable OSV API fails closed with a clear message
+  // -------------------------------------------------------------------------
+
+  test("an unavailable OSV API fails the scan with a clear, actionable message") {
+    val client = mock(classOf[Client])
+    val repo   = mock(classOf[VulnerabilityRepository])
+    when(repo.findCached(any(), any())).thenReturn(None)
+    when(client.queryBatch(any())(any()))
+      .thenReturn(
+        Left(RpcStatus(None, Some("Could not reach the OSV API. Cause: connect timed out")))
+      )
+
+    val engine = new Engine.Default(
+      EngineSettings.Default,
+      client,
+      ConnectionProvider.h2InMemory(),
+      (_: Connection) => repo
+    )
+
+    val ex = intercept[IllegalStateException] {
+      engine.analyzeDependencies(0.0, Set(dbDep), Set.empty)
+    }
+    assert(ex.getMessage.contains("OSV API was unavailable"), ex.getMessage)
+    assert(ex.getMessage.contains("connect timed out"), ex.getMessage)
+  }
+
 }
