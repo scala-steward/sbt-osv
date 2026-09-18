@@ -149,6 +149,13 @@ object Engine {
     ): ScanResult = {
       val suppressionsByName = suppressions.view.map(s => s.name -> s).toMap
 
+      // A suppression rule matches a vulnerability by its primary OSV id OR any of
+      // its aliases. OSV reports Maven-ecosystem advisories under a `GHSA-...` id
+      // while carrying the CVE only as an alias (and vice-versa), so users writing
+      // a rule against the CVE they know must still suppress the finding.
+      def matchingSuppressions(vulnerability: Vulnerability): Set[SuppressionRule] =
+        (vulnerability.aliases + vulnerability.id).flatMap(suppressionsByName.get)
+
       // Process all dependencies and vulnerabilities, accumulate a:
       //    - Map of dependencies with unsuppressed vulnerabilities
       //    - Set of suppressed vulnerabilities
@@ -166,16 +173,16 @@ object Engine {
               // If the vulnerability has to be suppressed:
               //    - add it to the used suppression,
               //    - and ignore it from the vulnerabilities
-              suppressionsByName.get(vulnerability.id) match {
-                case Some(suppression) =>
-                  (
-                    currentVulnerabilities,
-                    currentSuppressions + vulnerability,
-                    usedSuppressions + suppression
-                  )
+              val matched = matchingSuppressions(vulnerability)
 
-                case None =>
-                  (currentVulnerabilities + vulnerability, currentSuppressions, usedSuppressions)
+              if (matched.nonEmpty) {
+                (
+                  currentVulnerabilities,
+                  currentSuppressions + vulnerability,
+                  usedSuppressions ++ matched
+                )
+              } else {
+                (currentVulnerabilities + vulnerability, currentSuppressions, usedSuppressions)
               }
           }
 
