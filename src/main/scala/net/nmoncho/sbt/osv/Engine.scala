@@ -9,6 +9,9 @@ package net.nmoncho.sbt.osv
 import java.io.File
 import java.sql.Connection
 
+import scala.util.control.NonFatal
+
+import net.nmoncho.sbt.osv.api.OsvVulnerability
 import net.nmoncho.sbt.osv.api.v1.Client
 import net.nmoncho.sbt.osv.api.v1.V1BatchQuery
 import net.nmoncho.sbt.osv.api.v1.V1BatchVulnerabilityList
@@ -98,7 +101,64 @@ object Engine {
       repositoryProvider: Connection => VulnerabilityRepository
   ) extends Engine {
 
-    private lazy val repository = repositoryProvider(db.connection())
+    // The cache database is entirely best-effort. Opening it, reading from it, and
+    // writing to it can all fail (for example when a concurrent build contends for
+    // the shared H2 file on CI). None of those failures must ever fail the scan: on
+    // any database error we warn and carry on, falling back to the OSV API as if the
+    // cache were empty, and skipping writes (the next run re-fetches and re-caches).
+    private var repositoryResolved: Boolean                         = false
+    private var resolvedRepository: Option[VulnerabilityRepository] = None
+
+    /** Lazily opens the cache repository, memoizing the outcome. Returns `None` (cache
+      * disabled for this run) if the database cannot be opened.
+      */
+    private def repository()(implicit log: Logger): Option[VulnerabilityRepository] = {
+      if (!repositoryResolved) {
+        repositoryResolved = true
+        resolvedRepository =
+          try Some(repositoryProvider(db.connection()))
+          catch {
+            case NonFatal(e) =>
+              log.warn(
+                s"Could not open the OSV cache database; the scan will proceed without a cache. Cause: ${e.getMessage}"
+              )
+              None
+          }
+      }
+
+      resolvedRepository
+    }
+
+    /** Reads a cached result, treating any database failure as a cache miss so the
+      * caller queries the OSV API instead.
+      */
+    private def findCached(query: V1Query)(implicit log: Logger): Option[Seq[OsvVulnerability]] =
+      repository().flatMap { repo =>
+        try repo.findCached(query, settings.cacheEviction)
+        catch {
+          case NonFatal(e) =>
+            log.warn(
+              s"Could not read the OSV cache; querying the OSV API instead. Cause: ${e.getMessage}"
+            )
+            None
+        }
+      }
+
+    /** Writes a result to the cache, ignoring any database failure (the entry will be
+      * re-fetched and re-cached on the next run).
+      */
+    private def cache(query: V1Query, vulnerabilities: Seq[OsvVulnerability])(
+        implicit log: Logger
+    ): Unit =
+      repository().foreach { repo =>
+        try repo.cache(query, vulnerabilities)
+        catch {
+          case NonFatal(e) =>
+            log.warn(
+              s"Could not write to the OSV cache; it will be re-fetched next run. Cause: ${e.getMessage}"
+            )
+        }
+      }
 
     override def analyzeDependencies(
         failCvssScore: Double,
@@ -112,7 +172,7 @@ object Engine {
 
         val q = V1Query.of(d)
 
-        repository.findCached(q, settings.cacheEviction) match {
+        findCached(q) match {
           case Some(inDB) =>
             val vs = inDB.map(_.toVulnerability()).toSet
             toProcess -> (vulns + (d -> vs))
@@ -215,7 +275,7 @@ object Engine {
 
           client.query(query) match {
             case Right(value) =>
-              repository.cache(query, value.vulns.getOrElse(Seq.empty))
+              cache(query, value.vulns.getOrElse(Seq.empty))
               dep -> value.vulnerabilities()
 
             case Left(value) =>
@@ -229,7 +289,10 @@ object Engine {
     }
 
     override def close(): Unit =
-      db.close()
+      // Best-effort: closing the cache must never fail the build either (e.g. when
+      // the database could not be opened in the first place).
+      try db.close()
+      catch { case NonFatal(_) => () }
 
     override def writeReports(projectName: String, outputDir: sbt.File, report: String): Unit =
       IO.write(new File(outputDir, projectName), report)

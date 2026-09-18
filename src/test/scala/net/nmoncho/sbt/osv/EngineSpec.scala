@@ -8,10 +8,12 @@ package net.nmoncho.sbt.osv
 
 import java.io.File
 import java.sql.Connection
+import java.time.Instant
 
 import net.nmoncho.sbt.osv.api.OsvVulnerability
 import net.nmoncho.sbt.osv.api.v1.Client
 import net.nmoncho.sbt.osv.api.v1.V1BatchVulnerabilityList
+import net.nmoncho.sbt.osv.api.v1.V1VulnerabilityList
 import net.nmoncho.sbt.osv.settings.EngineSettings
 import net.nmoncho.sbt.osv.storage.ConnectionProvider
 import net.nmoncho.sbt.osv.storage.VulnerabilityRepository
@@ -163,6 +165,94 @@ class EngineSpec extends munit.FunSuite {
     )
     assert(result.suppressed.isEmpty)
     assertEquals(result.unusedSuppressions, Set(ruleThatMatchesNothing))
+  }
+
+  // -------------------------------------------------------------------------
+  // Database is best-effort: a failing cache never fails the scan
+  // -------------------------------------------------------------------------
+
+  private val dbDep = Dependency("org.foo", "bar", "1.0.0", new File("foo.jar"))
+
+  test("a database read failure is treated as a cache miss and falls back to the OSV API") {
+    val client = mock(classOf[Client])
+    val repo   = mock(classOf[VulnerabilityRepository])
+    val engine = new Engine.Default(
+      EngineSettings.Default,
+      client,
+      ConnectionProvider.h2InMemory(),
+      (_: Connection) => repo
+    )
+
+    when(repo.findCached(any(), any())).thenThrow(new RuntimeException("database is locked"))
+    when(client.queryBatch(any())(any())).thenReturn(Right(V1BatchVulnerabilityList(None)))
+
+    // Must not throw: the read error degrades to a cache miss.
+    val result = engine.analyzeDependencies(0.0, Set(dbDep), Set.empty)
+
+    verify(repo, times(1)).findCached(any(), any())
+    verify(client, times(1)).queryBatch(any())(any())
+    assert(result.vulnerabilities.getOrElse(dbDep, Set.empty).isEmpty)
+  }
+
+  test("a database write failure is ignored and the scan still returns results") {
+    val client = mock(classOf[Client])
+    val repo   = mock(classOf[VulnerabilityRepository])
+    val engine = new Engine.Default(
+      EngineSettings.Default,
+      client,
+      ConnectionProvider.h2InMemory(),
+      (_: Connection) => repo
+    )
+
+    // Cache miss forces the API path, whose result the engine then tries to cache.
+    when(repo.findCached(any(), any())).thenReturn(None)
+    val batch = V1BatchVulnerabilityList(
+      Some(
+        Vector(
+          V1BatchVulnerabilityList.Value(
+            Some(Vector(V1BatchVulnerabilityList.OsvBatchVulnerability("GHSA-xxxx", Instant.EPOCH)))
+          )
+        )
+      )
+    )
+    when(client.queryBatch(any())(any())).thenReturn(Right(batch))
+    when(client.query(any())(any()))
+      .thenReturn(Right(V1VulnerabilityList(Some(Vector(osvVuln("GHSA-xxxx"))))))
+    doThrow(new RuntimeException("disk full")).when(repo).cache(any(), any())
+
+    // Must not throw even though caching fails.
+    val result = engine.analyzeDependencies(0.0, Set(dbDep), Set.empty)
+
+    verify(repo, times(1)).cache(any(), any())
+    assertEquals(
+      result.vulnerabilities.getOrElse(dbDep, Set.empty).map(_.id),
+      Set("GHSA-xxxx")
+    )
+  }
+
+  test("a database that cannot be opened disables the cache and falls back to the OSV API") {
+    val client = mock(classOf[Client])
+    // Simulates CI contention on the shared H2 file: opening a connection fails.
+    val failingDb = new ConnectionProvider {
+      override def connection(): Connection =
+        throw new RuntimeException("cannot open shared H2 file (locked)")
+      override def close(): Unit = ()
+    }
+    val engine = new Engine.Default(
+      EngineSettings.Default,
+      client,
+      failingDb,
+      (_: Connection) => mock(classOf[VulnerabilityRepository])
+    )
+
+    when(client.queryBatch(any())(any())).thenReturn(Right(V1BatchVulnerabilityList(None)))
+
+    // Must not throw: the whole cache is disabled for this run.
+    val result = engine.analyzeDependencies(0.0, Set(dbDep), Set.empty)
+    engine.close() // closing a never-opened cache must also be safe
+
+    verify(client, times(1)).queryBatch(any())(any())
+    assert(result.vulnerabilities.getOrElse(dbDep, Set.empty).isEmpty)
   }
 
 }
