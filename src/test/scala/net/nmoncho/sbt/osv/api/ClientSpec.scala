@@ -7,6 +7,8 @@
 package net.nmoncho.sbt.osv.api
 
 import net.nmoncho.sbt.osv.TestUtils
+import net.nmoncho.sbt.osv.api.v1.Client
+import net.nmoncho.sbt.osv.api.v1.StubOsvServer
 import net.nmoncho.sbt.osv.api.v1.V1BatchQuery
 import net.nmoncho.sbt.osv.api.v1.V1Query
 import sbt._
@@ -16,59 +18,89 @@ class ClientSpec extends munit.FunSuite with TestUtils {
 
   implicit val log: Logger = Logger.Null
 
-  test("query vulnerabilities for a single package") {
-    val client = v1.Client()
+  private def vulnJson(id: String): String =
+    s"""{"id":"$id","schema_version":"1.6.0","summary":"summary of $id","details":"details","affected":[]}"""
 
-    val result = client.query(
-      V1Query.of("org.scala-sbt" % "sbt" % "1.11.7")
-    )
+  test("query parses vulnerabilities from the API") {
+    StubOsvServer.withServer((path, _) =>
+      if (path == "/v1/query") (200, s"""{"vulns":[${vulnJson("GHSA-x4ff-q6h8-v7gw")}]}""")
+      else (404, "{}")
+    ) { server =>
+      val result = Client(server.baseUrl).query(V1Query.of("org.scala-sbt" % "sbt" % "1.11.7"))
 
-    result match {
-      case Right(value) =>
-        assert(value.vulns.exists(_.size == 1), "The package has 1 vulnerability")
-        assert(value.vulns.exists(_.head.id == "GHSA-x4ff-q6h8-v7gw"))
-
-      case Left(value) =>
-        fail(s"Couldn't parse or fetch vulnerabilities from the API: ${value.toString}")
+      assert(result.isRight, result.toString)
+      val list = result.toOption.get
+      assertEquals(list.vulns.map(_.size), Some(1))
+      assertEquals(list.vulns.get.head.id, "GHSA-x4ff-q6h8-v7gw")
     }
   }
 
-  test("query vulnerabilities for a multiple packages") {
-    val client = v1.Client()
+  test("query follows pagination via next_page_token") {
+    var calls = 0
+    StubOsvServer.withServer((path, _) =>
+      if (path == "/v1/query") {
+        calls += 1
+        if (calls == 1) (200, s"""{"vulns":[${vulnJson("GHSA-1")}],"next_page_token":"tok"}""")
+        else (200, s"""{"vulns":[${vulnJson("GHSA-2")}]}""")
+      } else (404, "{}")
+    ) { server =>
+      val result = Client(server.baseUrl).query(V1Query.of("org" % "art" % "1.0"))
 
-    val query = V1BatchQuery.of(
-      "com.github.t3hnar"         % "scala-bcrypt_2.10"    % "2.6",
-      "com.google.code.findbugs"  % "jsr305"               % "1.3.9",
-      "com.google.http-client"    % "google-http-client"   % "1.22.0",
-      "com.google.oauth-client"   % "google-oauth-client"  % "1.22.0",
-      "commons-beanutils"         % "commons-beanutils"    % "1.9.1",
-      "commons-codec"             % "commons-codec"        % "1.3",
-      "commons-collections"       % "commons-collections"  % "3.2.1",
-      "commons-logging"           % "commons-logging"      % "1.1.1",
-      "de.svenkubiak"             % "jBCrypt"              % "0.4.1",
-      "org.apache.commons"        % "commons-collections4" % "4.1",
-      "org.apache.httpcomponents" % "httpclient"           % "4.0.1",
-      "org.apache.httpcomponents" % "httpcore"             % "4.0.1",
-      "org.scala-lang"            % "scala-library"        % "2.13.16"
-    )
-    val result = client.queryBatch(query)
-
-    result match {
-      case Right(value) =>
-        assert(value.results.nonEmpty, "there should be a result for the query")
-        val result = value.results.head
-
-        assert(result.size == query.queries.size, "result must have the same amount as queries")
-        assert(result.head.vulns == None, "'scala-bcrypt_2.10@2.6' has no vulnerabilities")
-
-        val googleOAuthClient = result(3)
-        assert(
-          googleOAuthClient.vulns.nonEmpty,
-          "'google-oauth-client@1.22.0' has some vulnerabilities"
-        )
-
-      case Left(value) =>
-        fail(s"Couldn't parse or fetch vulnerabilities from the API: ${value.toString}")
+      assert(result.isRight, result.toString)
+      assertEquals(result.toOption.get.vulns.map(_.map(_.id)), Some(Vector("GHSA-1", "GHSA-2")))
+      assertEquals(calls, 2)
     }
+  }
+
+  test("queryBatch parses per-package results") {
+    StubOsvServer.withServer((path, _) =>
+      if (path == "/v1/querybatch")
+        (200, """{"results":[{},{"vulns":[{"id":"GHSA-2","modified":"2020-01-01T00:00:00Z"}]}]}""")
+      else (404, "{}")
+    ) { server =>
+      val result =
+        Client(server.baseUrl).queryBatch(V1BatchQuery.of("a" % "a" % "1", "b" % "b" % "1"))
+
+      assert(result.isRight, result.toString)
+      val results = result.toOption.get.results.get
+      assertEquals(results.size, 2)
+      assertEquals(results.head.vulns, None, "first package has no vulnerabilities")
+      assert(results(1).vulns.nonEmpty, "second package has vulnerabilities")
+    }
+  }
+
+  test("a non-2xx response becomes a Left") {
+    StubOsvServer.withServer((_, _) => (400, """{"code":3,"message":"bad request"}""")) { server =>
+      val result = Client(server.baseUrl).query(V1Query.of("org" % "art" % "1.0"))
+      assert(result.isLeft, result.toString)
+    }
+  }
+
+  test("a transient 503 is retried and then succeeds") {
+    var calls = 0
+    StubOsvServer.withServer((path, _) =>
+      if (path == "/v1/query") {
+        calls += 1
+        if (calls == 1) (503, "service unavailable")
+        else (200, s"""{"vulns":[${vulnJson("GHSA-ok")}]}""")
+      } else (404, "{}")
+    ) { server =>
+      val result = Client(server.baseUrl).query(V1Query.of("org" % "art" % "1.0"))
+
+      assert(result.isRight, result.toString)
+      assertEquals(calls, 2, "the transient failure should have been retried")
+    }
+  }
+
+  test("live OSV API smoke test (opt-in via -Dosv.liveTests=true)") {
+    assume(
+      sys.props.get("osv.liveTests").contains("true"),
+      "live OSV API tests are disabled; set -Dosv.liveTests=true to enable"
+    )
+
+    // A loose smoke test: verify connectivity and parsing, not exact ids/counts (OSV
+    // data is mutable), so it never becomes flaky when enabled.
+    val result = Client().query(V1Query.of("org.scala-sbt" % "sbt" % "1.11.7"))
+    assert(result.isRight, s"live OSV query failed: $result")
   }
 }
