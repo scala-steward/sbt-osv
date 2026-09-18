@@ -255,4 +255,21 @@ class EngineSpec extends munit.FunSuite {
     assert(result.vulnerabilities.getOrElse(dbDep, Set.empty).isEmpty)
   }
 
+  // -------------------------------------------------------------------------
+  // Withdrawn advisories are excluded from the findings
+  // -------------------------------------------------------------------------
+
+  private def osvVulnWithdrawn(id: String): OsvVulnerability =
+    osvVuln(id).copy(withdrawn = Some(Instant.EPOCH))
+
+  test("withdrawn advisories are excluded from the results") {
+    val engine = engineReturning(osvVuln("GHSA-active"), osvVulnWithdrawn("GHSA-withdrawn"))
+
+    val result = engine.analyzeDependencies(0.0, Set(suppressionDep), Set.empty)
+
+    val ids = result.vulnerabilities.getOrElse(suppressionDep, Set.empty).map(_.id)
+    assert(ids.contains("GHSA-active"), s"active advisory should be reported: $ids")
+    assert(!ids.contains("GHSA-withdrawn"), s"withdrawn advisory must be excluded: $ids")
+  }
+
 }

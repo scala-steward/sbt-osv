@@ -198,10 +198,27 @@ object Engine {
       }
 
       processDependencies(
-        vulnerabilitiesInDB ++ vulnerabilitiesInAPI,
+        excludeWithdrawn(vulnerabilitiesInDB ++ vulnerabilitiesInAPI),
         suppressions
       )
     }
+
+    /** Removes withdrawn (retracted) advisories from the findings. A withdrawn OSV
+      * entry is no longer valid, so keeping it would inflate the vulnerability count
+      * and could fail the build on an advisory that no longer applies.
+      */
+    private def excludeWithdrawn(
+        vulnerabilities: Map[Dependency, Set[Vulnerability]]
+    )(implicit log: Logger): Map[Dependency, Set[Vulnerability]] =
+      vulnerabilities.map { case (dependency, vulns) =>
+        val (withdrawn, active) = vulns.partition(_.isWithdrawn)
+
+        withdrawn.foreach { v =>
+          log.debug(s"Ignoring withdrawn advisory [${v.id}] for [${dependency.coordinates}]")
+        }
+
+        dependency -> active
+      }
 
     private def processDependencies(
         vulnerabilities: Map[Dependency, Set[Vulnerability]],
