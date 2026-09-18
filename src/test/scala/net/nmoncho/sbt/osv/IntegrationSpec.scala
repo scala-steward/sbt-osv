@@ -50,12 +50,15 @@ class IntegrationSpec extends munit.FunSuite {
     StubOsvServer.withServer(handler) { server =>
       val e = engine(server.baseUrl)
       try {
-        val dep    = Dependency("org.example", "vulnerable", "1.0.0", new File("vulnerable-1.0.0.jar"))
+        val dep = Dependency("org.example", "vulnerable", "1.0.0", new File("vulnerable-1.0.0.jar"))
         val result = e.analyzeDependencies(0.0, Set(dep), Set.empty)
 
         val found = result.vulnerabilities.getOrElse(dep, Set.empty)
         assertEquals(found.map(_.id), Set("GHSA-known"))
-        assert(found.exists(_.scores.exists(_.score >= 9.0)), "the advisory should carry its CVSS score")
+        assert(
+          found.exists(_.scores.exists(_.score >= 9.0)),
+          "the advisory should carry its CVSS score"
+        )
 
         val json = ReportGenerator.JSON.generate(result.vulnerabilities)
         assert(json.contains("GHSA-known"), s"report should contain the advisory:\n$json")
